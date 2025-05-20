@@ -1,0 +1,49 @@
+# Download and extract the SRA files by SRAToolkit
+prefetch SRR28475464
+
+# Split the pair-end files by fatsq-dump
+fastq-dump --split-files SRR28475464.sra
+
+# Quality check of fastq files by FastQC
+fastqc -t 12 -o fastqc_results SRR28475464_1.fastq SRR28475464_2.fastq 
+                                 
+# Trimming with Trime-galore
+trim_galore --paired SRR25482874_1.fastq SRR25482874_2.fastq --output_dir trimmed_reads --fastqc --quality 20 --length 50
+
+# Download reference genome and alignment with reference genome
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/013/265/735/GCF_013265735.2_USDA_OmykA_1.1/GCF_013265735.2_USDA_OmykA_1.1_genomic.fna.gz
+
+gunzip GCF_013265735.2_USDA_OmykA_1.1_genomic.fna.gz
+
+hisat2-build GCF_013265735.2_USDA_OmykA_1.1_genomic.fna ref_index
+
+hisat2 -p 12 -x ~/omyk/ref_index -1 ~/omyk/ SRR28475464_1.fastq ~/omyk/ SRR28475464_2.fastq -S ~/omyk/ SRR28475464.sam
+
+# SAM to BAM Conversion and sorting by Samtool
+samtools view -S -b SRR28475464.sam > SRR28475464.bam
+
+samtools sort SRR28475464.bam -o SRR28475464_sorted.bam
+
+samtools index SRR28475464_sorted.bam
+
+# Expression analysis using Stringtie
+wget https://ftp.ensembl.org/pub/release-107/gff3/oncorhynchus_mykiss/Oncorhynchus_mykiss.USDA_OmykA_1.1.107.gff3.gz
+
+gunzip -c Oncorhynchus_mykiss.USDA_OmykA_1.1.107.gff3.gz | gffread - -T -o Oncorhynchus_mykiss.USDA_OmykA_1.1.107.gtf
+
+mkdir -p stringtie_out
+
+for bam in *_sorted.bam; do
+    sample=$(basename "$bam" _sorted.bam)
+    mkdir -p stringtie_out/$sample
+    echo "Processing $sample..."
+    stringtie -p 12 -B -e \
+        -G ../Oncorhynchus_mykiss.USDA_OmykA_1.1.107.gtf \
+        -o stringtie_out/${sample}/${sample}.gtf \
+        "$bam"
+done
+
+#!/bin/bash
+
+# Gene quantification using featureCounts 
+featureCounts -T 16 -B -C -a ~/omyk/Oncorhynchus_mykiss.USDA_OmykA_1.1.107.gtf -o SRR28475464_counts.txt -t exon -g gene_id --primary --SRR28475464_sorted.bam
